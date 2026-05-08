@@ -24,6 +24,8 @@ import {
   isLessonCompleted,
   getNextIncompleteLesson,
 } from "./progressService";
+import { getGamificationProfile } from "./gamificationProfileService";
+import { xpTransactions } from "~/db/schema";
 
 // Helper to create a module with lessons in the test db
 function createModuleWithLessons(
@@ -98,6 +100,59 @@ describe("progressService", () => {
       const progress = markLessonComplete(base.user.id, lessons[0].id);
 
       expect(progress.status).toBe(schema.LessonProgressStatus.Completed);
+    });
+  });
+
+  describe("lesson completion XP integration", () => {
+    it("awards 50 XP for completing a lesson", () => {
+      const { lessons } = createModuleWithLessons(
+        base.course.id,
+        "Module 1",
+        1,
+        1
+      );
+
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.xp).toBe(50);
+      expect(profile.activity).toHaveLength(1);
+      expect(profile.activity[0].amount).toBe(50);
+      expect(profile.activity[0].reason).toBe("lesson_complete");
+      expect(profile.activity[0].referenceType).toBe("lesson");
+      expect(profile.activity[0].referenceId).toBe(lessons[0].id);
+    });
+
+    it("does not re-award XP for completing the same lesson again", () => {
+      const { lessons } = createModuleWithLessons(
+        base.course.id,
+        "Module 1",
+        1,
+        1
+      );
+
+      markLessonComplete(base.user.id, lessons[0].id);
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.xp).toBe(50);
+      expect(profile.activity).toHaveLength(1);
+    });
+
+    it("awards XP separately for two different lessons", () => {
+      const { lessons } = createModuleWithLessons(
+        base.course.id,
+        "Module 1",
+        1,
+        2
+      );
+
+      markLessonComplete(base.user.id, lessons[0].id);
+      markLessonComplete(base.user.id, lessons[1].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.xp).toBe(100);
+      expect(profile.activity).toHaveLength(2);
     });
   });
 

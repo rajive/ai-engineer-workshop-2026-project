@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "~/db";
 import { users, xpTransactions, type XpTransactionReason } from "~/db/schema";
 
@@ -84,4 +84,26 @@ export function addXp(
     .set({ xp: newXp, level: newLevel })
     .where(eq(users.id, userId))
     .run();
+}
+
+export function awardLessonCompletionXp(
+  userId: number,
+  lessonId: number
+): void {
+  const existing = db
+    .select()
+    .from(xpTransactions)
+    .where(
+      and(
+        eq(xpTransactions.userId, userId),
+        eq(xpTransactions.reason, "lesson_complete"),
+        eq(xpTransactions.referenceType, "lesson"),
+        eq(xpTransactions.referenceId, lessonId)
+      )
+    )
+    .get();
+
+  if (existing) return;
+
+  addXp(userId, 50, "lesson_complete", "lesson", lessonId);
 }
