@@ -28,6 +28,12 @@ export enum TeamMemberRole {
   Member = "member",
 }
 
+export type XpTransactionReason =
+  | "lesson_complete"
+  | "quiz_pass"
+  | "quiz_first_try"
+  | "streak_milestone";
+
 // ─── Tables ───
 
 export const users = sqliteTable("users", {
@@ -37,6 +43,25 @@ export const users = sqliteTable("users", {
   role: text("role").notNull().$type<UserRole>(),
   avatarUrl: text("avatar_url"),
   bio: text("bio"),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  xp: integer("xp").notNull().default(0),
+  level: integer("level").notNull().default(1),
+  currentStreak: integer("current_streak").notNull().default(0),
+  longestStreak: integer("longest_streak").notNull().default(0),
+  lastStreakDate: text("last_streak_date"),
+});
+
+export const xpTransactions = sqliteTable("xp_transactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  amount: integer("amount").notNull(),
+  reason: text("reason").notNull().$type<XpTransactionReason>(),
+  referenceType: text("reference_type"),
+  referenceId: integer("reference_id"),
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),

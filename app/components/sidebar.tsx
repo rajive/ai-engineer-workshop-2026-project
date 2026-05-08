@@ -15,6 +15,7 @@ import {
   Sun,
   LogOut,
   Settings,
+  Flame,
 } from "lucide-react";
 
 interface CurrentUser {
@@ -22,6 +23,13 @@ interface CurrentUser {
   name: string;
   role: UserRole;
   avatarUrl: string | null;
+}
+
+interface GamificationSummary {
+  xp: number;
+  level: number;
+  levelTitle: string;
+  currentStreak: number;
 }
 
 interface RecentCourse {
@@ -38,6 +46,7 @@ interface SidebarProps {
   currentUser: CurrentUser | null;
   recentCourses?: RecentCourse[];
   isTeamAdmin?: boolean;
+  gamification?: GamificationSummary | null;
 }
 
 interface NavItem {
@@ -96,6 +105,7 @@ export function Sidebar({
   currentUser,
   recentCourses = [],
   isTeamAdmin = false,
+  gamification,
 }: SidebarProps) {
   const currentUserRole = currentUser?.role ?? null;
   const [isDark, setIsDark] = useState(false);
@@ -220,6 +230,18 @@ export function Sidebar({
               <div className="truncate text-xs capitalize text-sidebar-foreground/50">
                 {currentUser.role}
               </div>
+              {gamification && (
+                <div className="mt-1 flex items-center gap-2 text-xs text-sidebar-foreground/70">
+                  <span className="font-medium text-sidebar-foreground">
+                    Lvl {gamification.level}
+                  </span>
+                  <span>·</span>
+                  <span>{gamification.xp} XP</span>
+                  <span>·</span>
+                  <Flame className="size-3 text-orange-500" />
+                  <span>{gamification.currentStreak}</span>
+                </div>
+              )}
             </div>
             <NavLink
               to="/settings"
