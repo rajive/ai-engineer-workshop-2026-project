@@ -1,5 +1,15 @@
-import { describe, it, expect } from "vitest";
-import { getLevelForXp } from "./gamificationEngine";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createTestDb, seedBaseData } from "~/test/setup";
+
+let testDb: ReturnType<typeof createTestDb>;
+
+vi.mock("~/db", () => ({
+  get db() {
+    return testDb;
+  },
+}));
+
+import { getLevelForXp, getLevelUpAfterReward, addXp } from "./gamificationEngine";
 
 describe("getLevelForXp", () => {
   it("returns Level 1 - Beginner at 0 XP", () => {
@@ -78,5 +88,73 @@ describe("getLevelForXp", () => {
     expect(result.level).toBe(53);
     expect(result.title).toBe("Master");
     expect(result.xpToNextLevel).toBe(500);
+  });
+});
+
+describe("getLevelUpAfterReward", () => {
+  beforeEach(() => {
+    testDb = createTestDb();
+  });
+
+  it("returns levelUp when XP crosses a level threshold", () => {
+    // Seed a user with 0 XP (L1)
+    const { user } = seedBaseData(testDb);
+
+    // Award 300+ XP to cross into L2
+    const { result, levelUp } = getLevelUpAfterReward(user.id, () =>
+      addXp(user.id, 300, "lesson_complete")
+    );
+
+    expect(result).toBeUndefined(); // addXp returns void
+    expect(levelUp).not.toBeNull();
+    expect(levelUp!.newLevel).toBe(2);
+    expect(levelUp!.title).toBe("Apprentice");
+  });
+
+  it("returns null levelUp when staying in same level", () => {
+    const { user } = seedBaseData(testDb);
+
+    const { result, levelUp } = getLevelUpAfterReward(user.id, () =>
+      addXp(user.id, 50, "lesson_complete")
+    );
+
+    expect(levelUp).toBeNull();
+  });
+
+  it("captures the function result alongside levelUp", () => {
+    const { user } = seedBaseData(testDb);
+
+    const { result, levelUp } = getLevelUpAfterReward(user.id, () => 42);
+
+    expect(result).toBe(42);
+    expect(levelUp).toBeNull();
+  });
+
+  it("detects multi-level leaps", () => {
+    const { user } = seedBaseData(testDb);
+
+    const { levelUp } = getLevelUpAfterReward(user.id, () =>
+      addXp(user.id, 3000, "lesson_complete")
+    );
+
+    expect(levelUp).not.toBeNull();
+    expect(levelUp!.newLevel).toBe(5);
+    expect(levelUp!.title).toBe("Scholar");
+  });
+
+  it("returns levelUp for quiz pass that triggers level-up", () => {
+    const { user } = seedBaseData(testDb);
+
+    // First, get user to 299 XP (just below L2)
+    addXp(user.id, 299, "lesson_complete");
+
+    // Now award 100 (quiz pass) — should push to 399, crossing into L2
+    const { levelUp } = getLevelUpAfterReward(user.id, () =>
+      addXp(user.id, 100, "quiz_pass")
+    );
+
+    expect(levelUp).not.toBeNull();
+    expect(levelUp!.newLevel).toBe(2);
+    expect(levelUp!.title).toBe("Apprentice");
   });
 });

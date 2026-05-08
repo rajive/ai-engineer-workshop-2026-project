@@ -152,6 +152,39 @@ const STREAK_MILESTONES = [
   { days: 365, xp: 5000 },
 ] as const;
 
+export interface LevelUpEvent {
+  newLevel: number;
+  title: string;
+}
+
+export function getLevelUpAfterReward<T>(
+  userId: number,
+  action: () => T
+): { result: T; levelUp: LevelUpEvent | null } {
+  const userBefore = db
+    .select({ level: users.level })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get();
+  const prevLevel = userBefore?.level ?? 1;
+
+  const result = action();
+
+  const userAfter = db
+    .select({ level: users.level, xp: users.xp })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get();
+  const newLevel = userAfter?.level ?? 1;
+
+  if (newLevel > prevLevel) {
+    const levelInfo = getLevelForXp(userAfter!.xp);
+    return { result, levelUp: { newLevel, title: levelInfo.title } };
+  }
+
+  return { result, levelUp: null };
+}
+
 export function awardStreakMilestoneXp(
   userId: number,
   newStreak: number

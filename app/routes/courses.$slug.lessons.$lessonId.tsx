@@ -26,6 +26,7 @@ import {
   getBestAttempt,
 } from "~/services/quizService";
 import { computeResult } from "~/services/quizScoringService";
+import { getLevelUpAfterReward } from "~/services/gamificationEngine";
 import { LessonProgressStatus } from "~/db/schema";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
@@ -301,8 +302,10 @@ export async function action({ params, request }: Route.ActionArgs) {
   const intent = formData.get("intent");
 
   if (intent === "mark-complete") {
-    markLessonComplete(currentUserId, lessonId);
-    return { success: true };
+    const { levelUp } = getLevelUpAfterReward(currentUserId, () =>
+      markLessonComplete(currentUserId, lessonId)
+    );
+    return { success: true, levelUp };
   }
 
   if (intent === "submit-quiz") {
@@ -323,12 +326,14 @@ export async function action({ params, request }: Route.ActionArgs) {
       }
     }
 
-    const result = computeResult(currentUserId, quizId, selectedAnswers);
+    const { result, levelUp } = getLevelUpAfterReward(currentUserId, () =>
+      computeResult(currentUserId, quizId, selectedAnswers)
+    );
     if (!result) {
       throw data("Failed to score quiz", { status: 500 });
     }
 
-    return { quizResult: result };
+    return { quizResult: result, levelUp };
   }
 
   throw data("Invalid action", { status: 400 });
@@ -400,9 +405,16 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
   // Navigate to next lesson after marking complete
   useEffect(() => {
     if (justCompleted && nextLesson) {
+      const levelUp = (fetcher.data as Record<string, unknown>)?.levelUp as { newLevel: number; title: string } | undefined;
+      if (levelUp) {
+        toast.success(
+          `Level up! You reached ${levelUp.title} (Lvl ${levelUp.newLevel})`,
+          { duration: 5000 }
+        );
+      }
       navigate(`/courses/${course.slug}/lessons/${nextLesson.id}`);
     }
-  }, [justCompleted, nextLesson, course.slug, navigate]);
+  }, [justCompleted, nextLesson, course.slug, navigate, fetcher.data]);
 
   const quizResult = quizFetcher.data?.quizResult ?? null;
   const isSubmittingQuiz = quizFetcher.state !== "idle";
@@ -819,8 +831,15 @@ function QuizSection({
           `Quiz not passed. Score: ${Math.round(quizResult.score * 100)}%`
         );
       }
+      const levelUp = (quizFetcher.data as Record<string, unknown>)?.levelUp as { newLevel: number; title: string } | undefined;
+      if (levelUp) {
+        toast.success(
+          `Level up! You reached ${levelUp.title} (Lvl ${levelUp.newLevel})`,
+          { duration: 5000 }
+        );
+      }
     }
-  }, [quizResult, retaking]);
+  }, [quizResult, retaking, quizFetcher.data]);
 
   const allAnswered = quiz.questions.every(
     (q) => selectedAnswers[q.id] !== undefined
