@@ -89,4 +89,29 @@ describe("gamificationProfileService", () => {
       expect(activity).toHaveLength(2);
     });
   });
+
+  describe("dashboard integration", () => {
+    it("exposes the full dashboard-facing dataset (profile + activity)", () => {
+      addXp(base.user.id, 50, "lesson_complete", "lesson", 1);
+      addXp(base.user.id, 100, "quiz_pass", "quiz", 1);
+
+      const profile = getGamificationProfile(base.user.id);
+      const activity = getRecentActivity(base.user.id, 5);
+
+      expect(profile.xp).toBe(150);
+      expect(typeof profile.level).toBe("number");
+      expect(typeof profile.levelTitle).toBe("string");
+      expect(typeof profile.xpRequired).toBe("number");
+      expect(typeof profile.xpToNextLevel).toBe("number");
+      expect(typeof profile.currentStreak).toBe("number");
+      expect(typeof profile.longestStreak).toBe("number");
+      expect(Array.isArray(profile.activity)).toBe(true);
+
+      expect(activity).toHaveLength(2);
+      expect(activity[0].id).toBeGreaterThan(0);
+      expect(typeof activity[0].amount).toBe("number");
+      expect(typeof activity[0].reason).toBe("string");
+      expect(typeof activity[0].createdAt).toBe("string");
+    });
+  });
 });

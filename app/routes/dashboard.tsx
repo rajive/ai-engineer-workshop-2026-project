@@ -3,10 +3,11 @@ import type { Route } from "./+types/dashboard";
 import { getUserEnrolledCourses } from "~/services/enrollmentService";
 import { calculateProgress, getCompletedLessonCount, getTotalLessonCount, getNextIncompleteLesson } from "~/services/progressService";
 import { getCurrentUserId } from "~/lib/session";
+import { getGamificationProfile, getRecentActivity } from "~/services/gamificationProfileService";
 import { Card, CardContent, CardFooter, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
-import { AlertTriangle, BookOpen, CheckCircle2, GraduationCap, PlayCircle } from "lucide-react";
+import { AlertTriangle, BookOpen, CheckCircle2, Flame, GraduationCap, PlayCircle, Zap } from "lucide-react";
 import { CourseImage } from "~/components/course-image";
 import { data, isRouteErrorResponse } from "react-router";
 
@@ -58,8 +59,10 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const completedCourses = coursesWithProgress.filter((c) => c.isCompleted);
   const inProgressCourses = coursesWithProgress.filter((c) => !c.isCompleted);
+  const gamification = getGamificationProfile(currentUserId);
+  const recentActivity = getRecentActivity(currentUserId, 5);
 
-  return { inProgressCourses, completedCourses };
+  return { inProgressCourses, completedCourses, gamification, recentActivity };
 }
 
 function DashboardCardSkeleton() {
@@ -102,8 +105,11 @@ export function HydrateFallback() {
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
-  const { inProgressCourses, completedCourses } = loaderData;
+  const { inProgressCourses, completedCourses, gamification, recentActivity } = loaderData;
   const totalCourses = inProgressCourses.length + completedCourses.length;
+  const progressPct = gamification.xpToNextLevel > 0
+    ? Math.round((gamification.xp / (gamification.xp + gamification.xpToNextLevel)) * 100)
+    : 100;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -122,6 +128,81 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
           Track your learning progress
         </p>
       </div>
+
+      {/* Gamification Summary */}
+      <Card className="mb-8">
+        <CardContent className="p-6">
+          <div className="flex flex-wrap items-center gap-6">
+            <div className="flex items-center gap-3">
+              <div className="flex size-12 items-center justify-center rounded-full bg-primary/10">
+                <Zap className="size-6 text-primary" />
+              </div>
+              <div>
+                <div className="text-2xl font-bold">
+                  Lvl {gamification.level}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {gamification.levelTitle}
+                </div>
+              </div>
+            </div>
+            <div className="h-10 w-px bg-border" />
+            <div>
+              <div className="text-sm text-muted-foreground">Total XP</div>
+              <div className="text-xl font-semibold">{gamification.xp}</div>
+            </div>
+            <div className="h-10 w-px bg-border" />
+            <div className="flex-1 min-w-[160px]">
+              <div className="mb-1 flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Next Level</span>
+                <span className="font-medium">
+                  {gamification.xpToNextLevel > 0
+                    ? `${gamification.xpToNextLevel} XP needed`
+                    : "Max level"}
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+            </div>
+            <div className="h-10 w-px bg-border" />
+            <div className="flex items-center gap-2">
+              <Flame className="size-5 text-orange-500" />
+              <div>
+                <div className="text-xl font-semibold">
+                  {gamification.currentStreak}
+                </div>
+                <div className="text-sm text-muted-foreground">day streak</div>
+              </div>
+            </div>
+          </div>
+          {recentActivity.length > 0 && (
+            <div className="mt-4 border-t pt-4">
+              <div className="mb-2 text-sm font-medium text-muted-foreground">
+                Recent Activity
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {recentActivity.map((event) => (
+                  <span
+                    key={event.id}
+                    className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-xs"
+                  >
+                    <span className="font-medium text-primary">
+                      +{event.amount}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {event.reason.replace(/_/g, " ")}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {totalCourses === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
