@@ -145,6 +145,38 @@ export function awardQuizPassXp(
   }
 }
 
+const STREAK_MILESTONES = [
+  { days: 7, xp: 100 },
+  { days: 30, xp: 300 },
+  { days: 100, xp: 1000 },
+  { days: 365, xp: 5000 },
+] as const;
+
+export function awardStreakMilestoneXp(
+  userId: number,
+  newStreak: number
+): void {
+  const milestone = STREAK_MILESTONES.find((m) => m.days === newStreak);
+  if (!milestone) return;
+
+  const existing = db
+    .select()
+    .from(xpTransactions)
+    .where(
+      and(
+        eq(xpTransactions.userId, userId),
+        eq(xpTransactions.reason, "streak_milestone"),
+        eq(xpTransactions.referenceType, "streak_milestone"),
+        eq(xpTransactions.referenceId, milestone.days)
+      )
+    )
+    .get();
+
+  if (existing) return;
+
+  addXp(userId, milestone.xp, "streak_milestone", "streak_milestone", milestone.days);
+}
+
 export function updateStreak(userId: number): void {
   const user = db.select().from(users).where(eq(users.id, userId)).get();
   if (!user) throw new Error(`User ${userId} not found`);
@@ -179,4 +211,6 @@ export function updateStreak(userId: number): void {
     })
     .where(eq(users.id, userId))
     .run();
+
+  awardStreakMilestoneXp(userId, newStreak);
 }

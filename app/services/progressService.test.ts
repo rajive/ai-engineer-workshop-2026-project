@@ -247,6 +247,111 @@ describe("progressService", () => {
     });
   });
 
+  describe("streak milestone XP bonuses", () => {
+    it("awards 100 XP milestone at 7-day streak", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
+
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      testDb
+        .update(schema.users)
+        .set({
+          currentStreak: 6,
+          longestStreak: 6,
+          lastStreakDate: yesterday.toISOString().split("T")[0],
+        })
+        .where(eq(schema.users.id, base.user.id))
+        .run();
+
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(7);
+      expect(profile.xp).toBe(50 + 100);
+      expect(profile.activity).toHaveLength(2);
+      const milestoneTx = profile.activity.find((a: any) => a.reason === "streak_milestone")!;
+      expect(milestoneTx).toBeDefined();
+      expect(milestoneTx.amount).toBe(100);
+      expect(milestoneTx.referenceId).toBe(7);
+    });
+
+    it("does not re-award milestone XP for the same threshold", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
+
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      testDb
+        .update(schema.users)
+        .set({
+          currentStreak: 6,
+          longestStreak: 6,
+          lastStreakDate: yesterday.toISOString().split("T")[0],
+        })
+        .where(eq(schema.users.id, base.user.id))
+        .run();
+
+      // First completion advances to 7
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const { lessons: moreLessons } = createModuleWithLessons(base.course.id, "Module 2", 2, 1);
+
+      // Same day — streak stays 7, no new milestone
+      markLessonComplete(base.user.id, moreLessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(7);
+      expect(profile.xp).toBe(50 + 100 + 50);
+      expect(profile.activity).toHaveLength(3);
+      const milestones = profile.activity.filter((a: any) => a.reason === "streak_milestone");
+      expect(milestones).toHaveLength(1);
+    });
+
+    it("awards 300 XP milestone at 30-day streak", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
+
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      testDb
+        .update(schema.users)
+        .set({
+          currentStreak: 29,
+          longestStreak: 29,
+          lastStreakDate: yesterday.toISOString().split("T")[0],
+        })
+        .where(eq(schema.users.id, base.user.id))
+        .run();
+
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(30);
+      expect(profile.xp).toBe(50 + 300);
+    });
+
+    it("does not award milestone XP for non-milestone streak values", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
+
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      testDb
+        .update(schema.users)
+        .set({
+          currentStreak: 4,
+          longestStreak: 4,
+          lastStreakDate: yesterday.toISOString().split("T")[0],
+        })
+        .where(eq(schema.users.id, base.user.id))
+        .run();
+
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(5);
+      expect(profile.xp).toBe(50);
+      expect(profile.activity).toHaveLength(1);
+    });
+  });
+
   describe("markLessonInProgress", () => {
     it("marks a lesson as in-progress with a new progress record", () => {
       const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
