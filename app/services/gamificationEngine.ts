@@ -144,3 +144,39 @@ export function awardQuizPassXp(
     addXp(userId, 50, "quiz_first_try", "quiz", quizId);
   }
 }
+
+export function updateStreak(userId: number): void {
+  const user = db.select().from(users).where(eq(users.id, userId)).get();
+  if (!user) throw new Error(`User ${userId} not found`);
+
+  const today = new Date();
+  const todayStr = today.toISOString().split("T")[0];
+
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split("T")[0];
+
+  const lastDate = user.lastStreakDate;
+
+  if (lastDate === todayStr) return;
+
+  let newStreak: number;
+  let newLongest: number;
+
+  if (lastDate === yesterdayStr) {
+    newStreak = user.currentStreak + 1;
+    newLongest = Math.max(user.longestStreak, newStreak);
+  } else {
+    newStreak = 1;
+    newLongest = Math.max(user.longestStreak, 1);
+  }
+
+  db.update(users)
+    .set({
+      currentStreak: newStreak,
+      longestStreak: newLongest,
+      lastStreakDate: todayStr,
+    })
+    .where(eq(users.id, userId))
+    .run();
+}

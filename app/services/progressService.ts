@@ -8,7 +8,7 @@ import {
   enrollments,
   LessonProgressStatus,
 } from "~/db/schema";
-import { awardLessonCompletionXp } from "./gamificationEngine";
+import { awardLessonCompletionXp, updateStreak } from "./gamificationEngine";
 
 // ─── Progress Service ───
 // Handles lesson completion tracking and course progress calculation.
@@ -84,6 +84,7 @@ export function markLessonComplete(userId: number, lessonId: number) {
   }
 
   awardLessonCompletionXp(userId, lessonId);
+  updateStreak(userId);
   return result;
 }
 

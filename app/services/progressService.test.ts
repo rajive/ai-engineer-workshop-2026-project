@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 
@@ -153,6 +154,96 @@ describe("progressService", () => {
       const profile = getGamificationProfile(base.user.id);
       expect(profile.xp).toBe(100);
       expect(profile.activity).toHaveLength(2);
+    });
+  });
+
+  describe("lesson completion streak integration", () => {
+    it("starts streak at 1 on first lesson completion", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
+
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(1);
+      expect(profile.longestStreak).toBe(1);
+    });
+
+    it("increments streak on next calendar day", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
+
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      testDb
+        .update(schema.users)
+        .set({
+          currentStreak: 3,
+          longestStreak: 3,
+          lastStreakDate: yesterday.toISOString().split("T")[0],
+        })
+        .where(eq(schema.users.id, base.user.id))
+        .run();
+
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(4);
+      expect(profile.longestStreak).toBe(4);
+    });
+
+    it("resets streak to 1 when a day is missed", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
+
+      const threeDaysAgo = new Date();
+      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+      testDb
+        .update(schema.users)
+        .set({
+          currentStreak: 10,
+          longestStreak: 10,
+          lastStreakDate: threeDaysAgo.toISOString().split("T")[0],
+        })
+        .where(eq(schema.users.id, base.user.id))
+        .run();
+
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(1);
+      expect(profile.longestStreak).toBe(10);
+    });
+
+    it("does not change streak on same-day completion", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 2);
+
+      markLessonComplete(base.user.id, lessons[0].id);
+      markLessonComplete(base.user.id, lessons[1].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(1);
+      expect(profile.longestStreak).toBe(1);
+    });
+
+    it("updates longest streak when current exceeds previous best", () => {
+      const { lessons } = createModuleWithLessons(base.course.id, "Module 1", 1, 1);
+
+      // Set previous longest to 2, current to 2, last date to yesterday
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      testDb
+        .update(schema.users)
+        .set({
+          currentStreak: 2,
+          longestStreak: 2,
+          lastStreakDate: yesterday.toISOString().split("T")[0],
+        })
+        .where(eq(schema.users.id, base.user.id))
+        .run();
+
+      markLessonComplete(base.user.id, lessons[0].id);
+
+      const profile = getGamificationProfile(base.user.id);
+      expect(profile.currentStreak).toBe(3);
+      expect(profile.longestStreak).toBe(3);
     });
   });
 
