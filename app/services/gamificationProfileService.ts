@@ -57,7 +57,7 @@ export function getRecentActivity(
     })
     .from(xpTransactions)
     .where(eq(xpTransactions.userId, userId))
-    .orderBy(desc(xpTransactions.createdAt))
+    .orderBy(desc(xpTransactions.createdAt), desc(xpTransactions.id))
     .limit(limit)
     .all();
 }

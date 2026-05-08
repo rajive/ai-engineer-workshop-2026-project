@@ -1,6 +1,6 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "~/db";
-import { users, xpTransactions, type XpTransactionReason } from "~/db/schema";
+import { users, xpTransactions, quizAttempts, type XpTransactionReason } from "~/db/schema";
 
 export interface LevelInfo {
   level: number;
@@ -106,4 +106,41 @@ export function awardLessonCompletionXp(
   if (existing) return;
 
   addXp(userId, 50, "lesson_complete", "lesson", lessonId);
+}
+
+export function awardQuizPassXp(
+  userId: number,
+  quizId: number
+): void {
+  const existing = db
+    .select()
+    .from(xpTransactions)
+    .where(
+      and(
+        eq(xpTransactions.userId, userId),
+        eq(xpTransactions.reason, "quiz_pass"),
+        eq(xpTransactions.referenceType, "quiz"),
+        eq(xpTransactions.referenceId, quizId)
+      )
+    )
+    .get();
+
+  if (existing) return;
+
+  addXp(userId, 100, "quiz_pass", "quiz", quizId);
+
+  const attemptCount = db
+    .select({ count: sql<number>`count(*)` })
+    .from(quizAttempts)
+    .where(
+      and(
+        eq(quizAttempts.userId, userId),
+        eq(quizAttempts.quizId, quizId)
+      )
+    )
+    .get();
+
+  if ((attemptCount?.count ?? 0) === 1) {
+    addXp(userId, 50, "quiz_first_try", "quiz", quizId);
+  }
 }

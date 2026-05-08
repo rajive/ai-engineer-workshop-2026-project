@@ -8,6 +8,7 @@ import {
   quizAnswers,
 } from "~/db/schema";
 import Database from "better-sqlite3";
+import { awardQuizPassXp } from "./gamificationEngine";
 
 const rawDb = new Database("data.db");
 
@@ -258,6 +259,10 @@ export function computeResult(
           })
           .run();
       }
+    }
+
+    if (passed) {
+      awardQuizPassXp(userId, quizId);
     }
 
     return {
