@@ -59,7 +59,7 @@ export function getUserGamificationStats(userId: number) {
       .get();
   }
 
-  const { level, name } = computeLevel(row.totalPoints);
+  const { level, name, xpThreshold } = computeLevel(row.totalPoints);
   const nextTier = LEVELS.find((t) => t.level === level + 1);
   const xpToNextLevel = nextTier ? nextTier.xp - row.totalPoints : null;
 
@@ -68,6 +68,8 @@ export function getUserGamificationStats(userId: number) {
     currentLevel: level,
     levelName: name,
     xpToNextLevel,
+    currentLevelXp: xpThreshold,
+    nextLevelXp: nextTier ? nextTier.xp : null,
     currentStreak: row.currentStreak,
     longestStreak: row.longestStreak,
   };

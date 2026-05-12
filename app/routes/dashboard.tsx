@@ -2,12 +2,14 @@ import { Link } from "react-router";
 import type { Route } from "./+types/dashboard";
 import { getUserEnrolledCourses } from "~/services/enrollmentService";
 import { calculateProgress, getCompletedLessonCount, getTotalLessonCount, getNextIncompleteLesson } from "~/services/progressService";
+import { getUserGamificationStats } from "~/services/gamificationService";
 import { getCurrentUserId } from "~/lib/session";
 import { Card, CardContent, CardFooter, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 import { AlertTriangle, BookOpen, CheckCircle2, GraduationCap, PlayCircle } from "lucide-react";
 import { CourseImage } from "~/components/course-image";
+import { GamificationCard } from "~/components/gamification-card";
 import { data, isRouteErrorResponse } from "react-router";
 
 export function meta() {
@@ -59,7 +61,9 @@ export async function loader({ request }: Route.LoaderArgs) {
   const completedCourses = coursesWithProgress.filter((c) => c.isCompleted);
   const inProgressCourses = coursesWithProgress.filter((c) => !c.isCompleted);
 
-  return { inProgressCourses, completedCourses };
+  const gamificationStats = getUserGamificationStats(currentUserId);
+
+  return { inProgressCourses, completedCourses, gamificationStats };
 }
 
 function DashboardCardSkeleton() {
@@ -91,6 +95,7 @@ export function HydrateFallback() {
         <Skeleton className="h-9 w-48" />
         <Skeleton className="mt-2 h-5 w-64" />
       </div>
+      <Skeleton className="mb-8 h-32 w-full rounded-xl" />
       <Skeleton className="mb-4 h-6 w-32" />
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
@@ -102,7 +107,7 @@ export function HydrateFallback() {
 }
 
 export default function Dashboard({ loaderData }: Route.ComponentProps) {
-  const { inProgressCourses, completedCourses } = loaderData;
+  const { inProgressCourses, completedCourses, gamificationStats } = loaderData;
   const totalCourses = inProgressCourses.length + completedCourses.length;
 
   return (
@@ -121,6 +126,10 @@ export default function Dashboard({ loaderData }: Route.ComponentProps) {
         <p className="mt-1 text-muted-foreground">
           Track your learning progress
         </p>
+      </div>
+
+      <div className="mb-8">
+        <GamificationCard stats={gamificationStats} />
       </div>
 
       {totalCourses === 0 ? (

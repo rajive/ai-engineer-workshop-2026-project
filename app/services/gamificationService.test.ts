@@ -256,6 +256,42 @@ describe("gamificationService", () => {
       expect(stats.currentLevel).toBe(10);
       expect(stats.xpToNextLevel).toBeNull();
     });
+
+    it("exposes currentLevelXp and nextLevelXp for a fresh user", () => {
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.currentLevelXp).toBe(0);
+      expect(stats.nextLevelXp).toBe(100);
+    });
+
+    it("exposes currentLevelXp and nextLevelXp matching the active band", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          totalPoints: 150,
+          currentLevel: 2,
+        })
+        .run();
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.currentLevelXp).toBe(100);
+      expect(stats.nextLevelXp).toBe(250);
+    });
+
+    it("returns null nextLevelXp for a level 10 Legend", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          totalPoints: 5000,
+          currentLevel: 10,
+        })
+        .run();
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.currentLevelXp).toBe(5000);
+      expect(stats.nextLevelXp).toBeNull();
+    });
   });
 
   describe("getRecentPointsEvents", () => {
