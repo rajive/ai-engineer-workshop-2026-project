@@ -4,8 +4,14 @@ import {
   userGamification,
   pointsLedger,
   quizAttempts,
+  lessons,
+  modules,
   PointsEventType,
 } from "~/db/schema";
+import {
+  getCompletedLessonCount,
+  getTotalLessonCount,
+} from "./progressService";
 
 // ─── Level Thresholds ───
 
@@ -179,6 +185,65 @@ export function updateStreak(userId: number, activityDate: string): XpEvent[] {
   return xpEvents;
 }
 
+function getCourseIdForLesson(lessonId: number): number | null {
+  const row = db
+    .select({ courseId: modules.courseId })
+    .from(lessons)
+    .innerJoin(modules, eq(lessons.moduleId, modules.id))
+    .where(eq(lessons.id, lessonId))
+    .get();
+  return row?.courseId ?? null;
+}
+
+function maybeAwardCourseComplete(userId: number, lessonId: number): XpEvent[] {
+  const courseId = getCourseIdForLesson(lessonId);
+  if (courseId === null) return [];
+
+  const totalLessons = getTotalLessonCount(courseId);
+  if (totalLessons === 0) return [];
+  const completedLessons = getCompletedLessonCount(userId, courseId);
+  if (completedLessons < totalLessons) return [];
+
+  const already = db
+    .select()
+    .from(pointsLedger)
+    .where(
+      and(
+        eq(pointsLedger.userId, userId),
+        eq(pointsLedger.event, PointsEventType.CourseComplete),
+        eq(pointsLedger.referenceId, String(courseId))
+      )
+    )
+    .get();
+  if (already) return [];
+
+  const row = ensureGamificationRow(userId);
+  const newTotal = row.totalPoints + 100;
+  const newLevel = computeLevel(newTotal).level;
+
+  db.insert(pointsLedger)
+    .values({
+      userId,
+      points: 100,
+      event: PointsEventType.CourseComplete,
+      referenceId: String(courseId),
+    })
+    .run();
+
+  db.update(userGamification)
+    .set({ totalPoints: newTotal, currentLevel: newLevel })
+    .where(eq(userGamification.userId, userId))
+    .run();
+
+  return [
+    {
+      points: 100,
+      event: "course_complete",
+      label: "+100 XP — Course complete!",
+    },
+  ];
+}
+
 export function awardLessonPoints(userId: number, lessonId: number) {
   const existing = db
     .select()
@@ -219,6 +284,9 @@ export function awardLessonPoints(userId: number, lessonId: number) {
 
   const streakEvents = updateStreak(userId, todayUTC());
   xpEvents.push(...streakEvents);
+
+  const courseEvents = maybeAwardCourseComplete(userId, lessonId);
+  xpEvents.push(...courseEvents);
 
   return xpEvents;
 }

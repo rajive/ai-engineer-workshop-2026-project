@@ -946,6 +946,161 @@ describe("gamificationService", () => {
     });
   });
 
+  describe("awardLessonPoints + course completion bonus", () => {
+    function seedTwoLessons(courseId: number) {
+      const mod = testDb
+        .insert(schema.modules)
+        .values({ courseId, title: "M1", position: 1 })
+        .returning()
+        .get();
+      const l1 = testDb
+        .insert(schema.lessons)
+        .values({ moduleId: mod.id, title: "L1", position: 1 })
+        .returning()
+        .get();
+      const l2 = testDb
+        .insert(schema.lessons)
+        .values({ moduleId: mod.id, title: "L2", position: 2 })
+        .returning()
+        .get();
+      return { mod, l1, l2 };
+    }
+
+    function markLessonCompleted(userId: number, lessonId: number) {
+      testDb
+        .insert(schema.lessonProgress)
+        .values({
+          userId,
+          lessonId,
+          status: schema.LessonProgressStatus.Completed,
+          completedAt: new Date().toISOString(),
+        })
+        .run();
+    }
+
+    it("awards +100 course_complete bonus when the final lesson is completed", () => {
+      const { l1, l2 } = seedTwoLessons(base.course.id);
+      // Lesson 1 was previously completed (XP already awarded earlier);
+      // Lesson 2's lesson_progress row is written by markLessonComplete in the
+      // route prior to awardLessonPoints, so we seed it directly here.
+      markLessonCompleted(base.user.id, l1.id);
+      markLessonCompleted(base.user.id, l2.id);
+
+      const xpEvents = awardLessonPoints(base.user.id, l2.id);
+
+      expect(xpEvents).toContainEqual({
+        points: 10,
+        event: "lesson_complete",
+        label: "+10 XP — Lesson complete!",
+      });
+      expect(xpEvents).toContainEqual({
+        points: 100,
+        event: "course_complete",
+        label: "+100 XP — Course complete!",
+      });
+
+      const courseRows = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.CourseComplete)
+          )
+        )
+        .all();
+      expect(courseRows).toHaveLength(1);
+      expect(courseRows[0].points).toBe(100);
+      expect(courseRows[0].referenceId).toBe(String(base.course.id));
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(110); // +10 lesson + 100 course
+    });
+
+    it("does not award course_complete when other lessons are still incomplete", () => {
+      const { l1, l2 } = seedTwoLessons(base.course.id);
+      // Only the lesson being awarded is complete; l2 still pending.
+      markLessonCompleted(base.user.id, l1.id);
+
+      const xpEvents = awardLessonPoints(base.user.id, l1.id);
+
+      expect(xpEvents.some((e) => e.event === "course_complete")).toBe(false);
+
+      const courseRows = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.CourseComplete)
+          )
+        )
+        .all();
+      expect(courseRows).toHaveLength(0);
+
+      // Avoid unused-var lint on l2
+      expect(l2.id).toBeGreaterThan(l1.id);
+    });
+
+    it("does not re-award course_complete when called again after the course is already complete", () => {
+      const { l1, l2 } = seedTwoLessons(base.course.id);
+      markLessonCompleted(base.user.id, l1.id);
+      markLessonCompleted(base.user.id, l2.id);
+
+      // First call — awards both lesson XP and course completion bonus.
+      awardLessonPoints(base.user.id, l2.id);
+
+      // Now a third lesson is added later (course was extended).
+      const mod2 = testDb
+        .insert(schema.modules)
+        .values({ courseId: base.course.id, title: "M2", position: 2 })
+        .returning()
+        .get();
+      const l3 = testDb
+        .insert(schema.lessons)
+        .values({ moduleId: mod2.id, title: "L3", position: 1 })
+        .returning()
+        .get();
+      markLessonCompleted(base.user.id, l3.id);
+
+      const xpEvents = awardLessonPoints(base.user.id, l3.id);
+
+      // l3 is brand-new so lesson_complete fires, but course_complete does not.
+      expect(xpEvents.some((e) => e.event === "lesson_complete")).toBe(true);
+      expect(xpEvents.some((e) => e.event === "course_complete")).toBe(false);
+
+      const courseRows = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.CourseComplete)
+          )
+        )
+        .all();
+      expect(courseRows).toHaveLength(1);
+    });
+
+    it("updates currentLevel when the course completion bonus crosses a threshold", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({ userId: base.user.id, totalPoints: 145, currentLevel: 2 })
+        .run();
+      const { l1, l2 } = seedTwoLessons(base.course.id);
+      markLessonCompleted(base.user.id, l1.id);
+      markLessonCompleted(base.user.id, l2.id);
+
+      awardLessonPoints(base.user.id, l2.id);
+
+      const stats = getUserGamificationStats(base.user.id);
+      // 145 + 10 lesson + 100 course = 255 → level 3 Apprentice (>=250)
+      expect(stats.totalPoints).toBe(255);
+      expect(stats.currentLevel).toBe(3);
+      expect(stats.levelName).toBe("Apprentice");
+    });
+  });
+
   describe("awardLessonPoints + updateStreak integration", () => {
     it("returns lesson + streak daily bonus xpEvents on a consecutive day", () => {
       const lesson1 = seedLesson(testDb, base.course.id);
