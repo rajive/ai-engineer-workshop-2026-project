@@ -12,7 +12,20 @@ vi.mock("~/db", () => ({
 }));
 
 // Import after mock so the module picks up our test db
-import { computeLevel, getUserGamificationStats, getRecentPointsEvents } from "./gamificationService";
+import { computeLevel, getUserGamificationStats, getRecentPointsEvents, awardLessonPoints } from "./gamificationService";
+
+function seedLesson(db: typeof testDb, courseId: number) {
+  const mod = db
+    .insert(schema.modules)
+    .values({ courseId, title: "Module 1", position: 1 })
+    .returning()
+    .get();
+  return db
+    .insert(schema.lessons)
+    .values({ moduleId: mod.id, title: "Lesson 1", position: 1 })
+    .returning()
+    .get();
+}
 
 describe("gamificationService", () => {
   beforeEach(() => {
@@ -309,6 +322,65 @@ describe("gamificationService", () => {
       const events = getRecentPointsEvents(base.user.id, 10);
       expect(events).toHaveLength(1);
       expect(events[0].points).toBe(10);
+    });
+  });
+
+  describe("awardLessonPoints", () => {
+    it("awards 10 XP and writes a ledger entry on first call", () => {
+      const lesson = seedLesson(testDb, base.course.id);
+      awardLessonPoints(base.user.id, lesson.id);
+      const events = getRecentPointsEvents(base.user.id, 10);
+      expect(events).toHaveLength(1);
+      expect(events[0].points).toBe(10);
+      expect(events[0].event).toBe(schema.PointsEventType.LessonComplete);
+      expect(events[0].referenceId).toBe(String(lesson.id));
+    });
+
+    it("updates totalPoints on userGamification row", () => {
+      const lesson = seedLesson(testDb, base.course.id);
+      awardLessonPoints(base.user.id, lesson.id);
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(10);
+    });
+
+    it("updates currentLevel when XP crosses a threshold", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({ userId: base.user.id, totalPoints: 95, currentLevel: 1 })
+        .run();
+      const lesson = seedLesson(testDb, base.course.id);
+      awardLessonPoints(base.user.id, lesson.id);
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(105);
+      expect(stats.currentLevel).toBe(2);
+    });
+
+    it("returns xpEvents with correct shape", () => {
+      const lesson = seedLesson(testDb, base.course.id);
+      const xpEvents = awardLessonPoints(base.user.id, lesson.id);
+      expect(xpEvents).toHaveLength(1);
+      expect(xpEvents[0]).toEqual({
+        points: 10,
+        event: "lesson_complete",
+        label: "+10 XP — Lesson complete!",
+      });
+    });
+
+    it("second call for same lesson is a no-op: no new ledger entry and totalPoints unchanged", () => {
+      const lesson = seedLesson(testDb, base.course.id);
+      awardLessonPoints(base.user.id, lesson.id);
+      awardLessonPoints(base.user.id, lesson.id);
+      const events = getRecentPointsEvents(base.user.id, 10);
+      expect(events).toHaveLength(1);
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(10);
+    });
+
+    it("second call for same lesson returns empty xpEvents", () => {
+      const lesson = seedLesson(testDb, base.course.id);
+      awardLessonPoints(base.user.id, lesson.id);
+      const xpEvents = awardLessonPoints(base.user.id, lesson.id);
+      expect(xpEvents).toHaveLength(0);
     });
   });
 });

@@ -1,6 +1,6 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { db } from "~/db";
-import { userGamification, pointsLedger } from "~/db/schema";
+import { userGamification, pointsLedger, PointsEventType } from "~/db/schema";
 
 // ─── Level Thresholds ───
 
@@ -60,6 +60,51 @@ export function getUserGamificationStats(userId: number) {
     currentStreak: row.currentStreak,
     longestStreak: row.longestStreak,
   };
+}
+
+export function awardLessonPoints(userId: number, lessonId: number) {
+  const existing = db
+    .select()
+    .from(pointsLedger)
+    .where(
+      and(
+        eq(pointsLedger.userId, userId),
+        eq(pointsLedger.event, PointsEventType.LessonComplete),
+        eq(pointsLedger.referenceId, String(lessonId))
+      )
+    )
+    .get();
+
+  if (existing) return [];
+
+  let row = db
+    .select()
+    .from(userGamification)
+    .where(eq(userGamification.userId, userId))
+    .get();
+
+  if (!row) {
+    row = db.insert(userGamification).values({ userId }).returning().get();
+  }
+
+  const newTotal = row.totalPoints + 10;
+  const newLevel = computeLevel(newTotal).level;
+
+  db.insert(pointsLedger)
+    .values({
+      userId,
+      points: 10,
+      event: PointsEventType.LessonComplete,
+      referenceId: String(lessonId),
+    })
+    .run();
+
+  db.update(userGamification)
+    .set({ totalPoints: newTotal, currentLevel: newLevel })
+    .where(eq(userGamification.userId, userId))
+    .run();
+
+  return [{ points: 10, event: "lesson_complete", label: "+10 XP — Lesson complete!" }];
 }
 
 export function getRecentPointsEvents(userId: number, limit: number) {

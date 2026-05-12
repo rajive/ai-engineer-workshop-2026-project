@@ -26,6 +26,7 @@ import {
   getBestAttempt,
 } from "~/services/quizService";
 import { computeResult } from "~/services/quizScoringService";
+import { awardLessonPoints } from "~/services/gamificationService";
 import { LessonProgressStatus } from "~/db/schema";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
@@ -302,7 +303,8 @@ export async function action({ params, request }: Route.ActionArgs) {
 
   if (intent === "mark-complete") {
     markLessonComplete(currentUserId, lessonId);
-    return { success: true };
+    const xpEvents = awardLessonPoints(currentUserId, lessonId);
+    return { success: true, xpEvents };
   }
 
   if (intent === "submit-quiz") {
@@ -393,6 +395,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
     fetcher.formData?.get("intent") === "mark-complete";
 
   const justCompleted = fetcher.data?.success;
+  const xpEvents = fetcher.data?.xpEvents ?? [];
 
   const isCompleted =
     lessonStatus === LessonProgressStatus.Completed || justCompleted;
@@ -403,6 +406,16 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
       navigate(`/courses/${course.slug}/lessons/${nextLesson.id}`);
     }
   }, [justCompleted, nextLesson, course.slug, navigate]);
+
+  useEffect(() => {
+    if (justCompleted) {
+      for (const ev of xpEvents) {
+        toast.success(ev.label);
+      }
+    }
+    // xpEvents intentionally omitted — reference changes on each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [justCompleted]);
 
   const quizResult = quizFetcher.data?.quizResult ?? null;
   const isSubmittingQuiz = quizFetcher.state !== "idle";
