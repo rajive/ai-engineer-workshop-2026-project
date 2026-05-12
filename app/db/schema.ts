@@ -253,3 +253,38 @@ export const videoWatchEvents = sqliteTable("video_watch_events", {
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
 });
+
+export enum PointsEventType {
+  LessonComplete = "lesson_complete",
+  QuizPass = "quiz_pass",
+  QuizScoreBonus = "quiz_score_bonus",
+  StreakDaily = "streak_daily",
+  StreakMilestone = "streak_milestone",
+  CourseComplete = "course_complete",
+}
+
+export const userGamification = sqliteTable("user_gamification", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id),
+  totalPoints: integer("total_points").notNull().default(0),
+  currentLevel: integer("current_level").notNull().default(1),
+  currentStreak: integer("current_streak").notNull().default(0),
+  longestStreak: integer("longest_streak").notNull().default(0),
+  lastActivityDate: text("last_activity_date"),
+});
+
+export const pointsLedger = sqliteTable("points_ledger", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  points: integer("points").notNull(),
+  event: text("event").notNull().$type<PointsEventType>(),
+  referenceId: text("reference_id"),
+  earnedAt: text("earned_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
