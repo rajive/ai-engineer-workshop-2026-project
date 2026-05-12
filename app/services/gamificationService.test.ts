@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { eq, and } from "drizzle-orm";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
 
@@ -12,7 +13,13 @@ vi.mock("~/db", () => ({
 }));
 
 // Import after mock so the module picks up our test db
-import { computeLevel, getUserGamificationStats, getRecentPointsEvents, awardLessonPoints } from "./gamificationService";
+import {
+  computeLevel,
+  getUserGamificationStats,
+  getRecentPointsEvents,
+  awardLessonPoints,
+  updateStreak,
+} from "./gamificationService";
 
 function seedLesson(db: typeof testDb, courseId: number) {
   const mod = db
@@ -382,5 +389,343 @@ describe("gamificationService", () => {
       const xpEvents = awardLessonPoints(base.user.id, lesson.id);
       expect(xpEvents).toHaveLength(0);
     });
+
+    it("initialises streak to 1 on first lesson completion and updates lastActivityDate", () => {
+      const lesson = seedLesson(testDb, base.course.id);
+      awardLessonPoints(base.user.id, lesson.id);
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.currentStreak).toBe(1);
+      expect(stats.longestStreak).toBe(1);
+    });
+  });
+
+  describe("updateStreak", () => {
+    it("initialises currentStreak to 1 with no daily bonus on first activity ever", () => {
+      const xpEvents = updateStreak(base.user.id, "2024-01-01");
+      expect(xpEvents).toEqual([]);
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(1);
+      expect(row?.longestStreak).toBe(1);
+      expect(row?.lastActivityDate).toBe("2024-01-01");
+    });
+
+    it("is a no-op when activityDate equals lastActivityDate", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          currentStreak: 3,
+          longestStreak: 5,
+          lastActivityDate: "2024-01-01",
+        })
+        .run();
+
+      const xpEvents = updateStreak(base.user.id, "2024-01-01");
+      expect(xpEvents).toEqual([]);
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(3);
+      expect(row?.longestStreak).toBe(5);
+
+      const ledgerCount = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(eq(schema.pointsLedger.userId, base.user.id))
+        .all();
+      expect(ledgerCount).toHaveLength(0);
+    });
+
+    it("increments currentStreak and awards +5 XP on a consecutive day", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          totalPoints: 10,
+          currentLevel: 1,
+          currentStreak: 1,
+          longestStreak: 1,
+          lastActivityDate: "2024-01-01",
+        })
+        .run();
+
+      const xpEvents = updateStreak(base.user.id, "2024-01-02");
+      expect(xpEvents).toEqual([
+        { points: 5, event: "streak_daily", label: "+5 XP — Daily streak!" },
+      ]);
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(2);
+      expect(row?.longestStreak).toBe(2);
+      expect(row?.totalPoints).toBe(15);
+      expect(row?.lastActivityDate).toBe("2024-01-02");
+
+      const ledger = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(eq(schema.pointsLedger.userId, base.user.id))
+        .all();
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0].event).toBe(schema.PointsEventType.StreakDaily);
+      expect(ledger[0].points).toBe(5);
+    });
+
+    it("resets currentStreak to 1 (no daily bonus) when a day is skipped", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          currentStreak: 5,
+          longestStreak: 5,
+          lastActivityDate: "2024-01-01",
+        })
+        .run();
+
+      const xpEvents = updateStreak(base.user.id, "2024-01-03");
+      expect(xpEvents).toEqual([]);
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(1);
+      expect(row?.longestStreak).toBe(5);
+      expect(row?.lastActivityDate).toBe("2024-01-03");
+    });
+
+    it("updates longestStreak whenever currentStreak exceeds it", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          currentStreak: 3,
+          longestStreak: 3,
+          lastActivityDate: "2024-01-03",
+        })
+        .run();
+
+      updateStreak(base.user.id, "2024-01-04");
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(4);
+      expect(row?.longestStreak).toBe(4);
+    });
+
+    it("does not reduce longestStreak when currentStreak resets", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          currentStreak: 10,
+          longestStreak: 10,
+          lastActivityDate: "2024-01-10",
+        })
+        .run();
+
+      updateStreak(base.user.id, "2024-01-15");
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(1);
+      expect(row?.longestStreak).toBe(10);
+    });
+
+    it("awards +25 milestone bonus at exactly 7 consecutive days", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          currentStreak: 6,
+          longestStreak: 6,
+          lastActivityDate: "2024-01-06",
+        })
+        .run();
+
+      const xpEvents = updateStreak(base.user.id, "2024-01-07");
+      expect(xpEvents).toEqual([
+        { points: 5, event: "streak_daily", label: "+5 XP — Daily streak!" },
+        { points: 25, event: "streak_milestone", label: "+25 XP — 7-day streak!" },
+      ]);
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(7);
+      expect(row?.totalPoints).toBe(30);
+
+      const milestoneRows = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.StreakMilestone)
+          )
+        )
+        .all();
+      expect(milestoneRows).toHaveLength(1);
+      expect(milestoneRows[0].points).toBe(25);
+    });
+
+    it("awards +50 milestone bonus at exactly 14 consecutive days", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          currentStreak: 13,
+          longestStreak: 13,
+          lastActivityDate: "2024-01-13",
+        })
+        .run();
+
+      const xpEvents = updateStreak(base.user.id, "2024-01-14");
+      expect(xpEvents).toContainEqual({
+        points: 50,
+        event: "streak_milestone",
+        label: "+50 XP — 14-day streak!",
+      });
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(14);
+      expect(row?.totalPoints).toBe(55);
+    });
+
+    it("awards +100 milestone bonus at exactly 30 consecutive days", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          currentStreak: 29,
+          longestStreak: 29,
+          lastActivityDate: "2024-01-29",
+        })
+        .run();
+
+      const xpEvents = updateStreak(base.user.id, "2024-01-30");
+      expect(xpEvents).toContainEqual({
+        points: 100,
+        event: "streak_milestone",
+        label: "+100 XP — 30-day streak!",
+      });
+
+      const row = testDb
+        .select()
+        .from(schema.userGamification)
+        .where(eq(schema.userGamification.userId, base.user.id))
+        .get();
+      expect(row?.currentStreak).toBe(30);
+      expect(row?.totalPoints).toBe(105);
+    });
+
+    it("does not re-award the 7-day milestone on day 8", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          currentStreak: 7,
+          longestStreak: 7,
+          lastActivityDate: "2024-01-07",
+        })
+        .run();
+
+      const xpEvents = updateStreak(base.user.id, "2024-01-08");
+      expect(xpEvents).toEqual([
+        { points: 5, event: "streak_daily", label: "+5 XP — Daily streak!" },
+      ]);
+
+      const milestoneRows = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.StreakMilestone)
+          )
+        )
+        .all();
+      expect(milestoneRows).toHaveLength(0);
+    });
+
+    it("updates currentLevel when streak bonus pushes XP across a threshold", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          totalPoints: 95,
+          currentLevel: 1,
+          currentStreak: 1,
+          longestStreak: 1,
+          lastActivityDate: "2024-01-01",
+        })
+        .run();
+
+      updateStreak(base.user.id, "2024-01-02");
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(100);
+      expect(stats.currentLevel).toBe(2);
+    });
+  });
+
+  describe("awardLessonPoints + updateStreak integration", () => {
+    it("returns lesson + streak daily bonus xpEvents on a consecutive day", () => {
+      const lesson1 = seedLesson(testDb, base.course.id);
+      // Seed yesterday's state
+      testDb
+        .insert(schema.userGamification)
+        .values({
+          userId: base.user.id,
+          totalPoints: 10,
+          currentLevel: 1,
+          currentStreak: 1,
+          longestStreak: 1,
+          lastActivityDate: getYesterdayUTC(),
+        })
+        .run();
+
+      const xpEvents = awardLessonPoints(base.user.id, lesson1.id);
+      expect(xpEvents).toContainEqual({
+        points: 10,
+        event: "lesson_complete",
+        label: "+10 XP — Lesson complete!",
+      });
+      expect(xpEvents).toContainEqual({
+        points: 5,
+        event: "streak_daily",
+        label: "+5 XP — Daily streak!",
+      });
+    });
   });
 });
+
+function getYesterdayUTC(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
