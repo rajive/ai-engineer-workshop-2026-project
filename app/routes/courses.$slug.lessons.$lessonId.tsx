@@ -26,7 +26,10 @@ import {
   getBestAttempt,
 } from "~/services/quizService";
 import { computeResult } from "~/services/quizScoringService";
-import { awardLessonPoints } from "~/services/gamificationService";
+import {
+  awardLessonPoints,
+  awardQuizPoints,
+} from "~/services/gamificationService";
 import { LessonProgressStatus } from "~/db/schema";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
@@ -330,7 +333,9 @@ export async function action({ params, request }: Route.ActionArgs) {
       throw data("Failed to score quiz", { status: 500 });
     }
 
-    return { quizResult: result };
+    const xpEvents = awardQuizPoints(currentUserId, result.attemptId);
+
+    return { quizResult: result, xpEvents };
   }
 
   throw data("Invalid action", { status: 400 });
@@ -554,6 +559,7 @@ export default function LessonViewer({ loaderData }: Route.ComponentProps) {
               quiz={quiz}
               bestAttempt={bestAttempt}
               quizResult={quizResult}
+              quizXpEvents={quizFetcher.data?.xpEvents ?? []}
               quizFetcher={quizFetcher}
               isSubmitting={isSubmittingQuiz}
             />
@@ -782,6 +788,7 @@ function QuizSection({
   quiz,
   bestAttempt,
   quizResult,
+  quizXpEvents,
   quizFetcher,
   isSubmitting,
 }: {
@@ -812,6 +819,7 @@ function QuizSection({
       correctOptionId: number | null;
     }>;
   } | null;
+  quizXpEvents: Array<{ points: number; event: string; label: string }>;
   quizFetcher: ReturnType<typeof useFetcher>;
   isSubmitting: boolean;
 }) {
@@ -827,12 +835,17 @@ function QuizSection({
         toast.success(
           `Quiz passed! Score: ${Math.round(quizResult.score * 100)}%`
         );
+        for (const ev of quizXpEvents) {
+          toast.success(ev.label);
+        }
       } else {
         toast.error(
           `Quiz not passed. Score: ${Math.round(quizResult.score * 100)}%`
         );
       }
     }
+    // quizXpEvents intentionally omitted — reference changes on each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quizResult, retaking]);
 
   const allAnswered = quiz.questions.every(

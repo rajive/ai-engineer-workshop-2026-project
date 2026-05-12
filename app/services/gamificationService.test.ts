@@ -18,6 +18,7 @@ import {
   getUserGamificationStats,
   getRecentPointsEvents,
   awardLessonPoints,
+  awardQuizPoints,
   updateStreak,
 } from "./gamificationService";
 
@@ -30,6 +31,37 @@ function seedLesson(db: typeof testDb, courseId: number) {
   return db
     .insert(schema.lessons)
     .values({ moduleId: mod.id, title: "Lesson 1", position: 1 })
+    .returning()
+    .get();
+}
+
+function seedQuiz(db: typeof testDb, courseId: number) {
+  const lesson = seedLesson(db, courseId);
+  const quiz = db
+    .insert(schema.quizzes)
+    .values({ lessonId: lesson.id, title: "Quiz 1", passingScore: 0.7 })
+    .returning()
+    .get();
+  return { lesson, quiz };
+}
+
+function seedQuizAttempt(
+  db: typeof testDb,
+  userId: number,
+  quizId: number,
+  score: number,
+  passed: boolean,
+  attemptedAt?: string
+) {
+  return db
+    .insert(schema.quizAttempts)
+    .values({
+      userId,
+      quizId,
+      score,
+      passed,
+      ...(attemptedAt ? { attemptedAt } : {}),
+    })
     .returning()
     .get();
 }
@@ -689,6 +721,227 @@ describe("gamificationService", () => {
 
       const stats = getUserGamificationStats(base.user.id);
       expect(stats.totalPoints).toBe(100);
+      expect(stats.currentLevel).toBe(2);
+    });
+  });
+
+  describe("awardQuizPoints", () => {
+    it("awards +15 XP and writes a quiz_pass ledger entry on first passing attempt", () => {
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const attempt = seedQuizAttempt(testDb, base.user.id, quiz.id, 0.75, true);
+
+      const xpEvents = awardQuizPoints(base.user.id, attempt.id);
+
+      expect(xpEvents).toContainEqual({
+        points: 15,
+        event: "quiz_pass",
+        label: "+15 XP — Quiz passed!",
+      });
+
+      const ledger = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.QuizPass)
+          )
+        )
+        .all();
+      expect(ledger).toHaveLength(1);
+      expect(ledger[0].points).toBe(15);
+      expect(ledger[0].referenceId).toBe(String(attempt.id));
+    });
+
+    it("awards +5 score bonus on a grade A pass (>=90%)", () => {
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const attempt = seedQuizAttempt(testDb, base.user.id, quiz.id, 0.95, true);
+
+      const xpEvents = awardQuizPoints(base.user.id, attempt.id);
+
+      expect(xpEvents).toEqual([
+        { points: 15, event: "quiz_pass", label: "+15 XP — Quiz passed!" },
+        {
+          points: 5,
+          event: "quiz_score_bonus",
+          label: "+5 XP — Grade A bonus!",
+        },
+      ]);
+
+      const bonusRows = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.QuizScoreBonus)
+          )
+        )
+        .all();
+      expect(bonusRows).toHaveLength(1);
+      expect(bonusRows[0].points).toBe(5);
+      expect(bonusRows[0].referenceId).toBe(String(attempt.id));
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(20);
+    });
+
+    it("awards +3 score bonus on a grade B pass (80%)", () => {
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const attempt = seedQuizAttempt(testDb, base.user.id, quiz.id, 0.8, true);
+
+      const xpEvents = awardQuizPoints(base.user.id, attempt.id);
+
+      expect(xpEvents).toEqual([
+        { points: 15, event: "quiz_pass", label: "+15 XP — Quiz passed!" },
+        {
+          points: 3,
+          event: "quiz_score_bonus",
+          label: "+3 XP — Grade B bonus!",
+        },
+      ]);
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(18);
+    });
+
+    it("awards only base XP on a grade C pass (just above 70%)", () => {
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const attempt = seedQuizAttempt(testDb, base.user.id, quiz.id, 0.75, true);
+
+      const xpEvents = awardQuizPoints(base.user.id, attempt.id);
+      expect(xpEvents).toHaveLength(1);
+      expect(xpEvents[0].event).toBe("quiz_pass");
+
+      const bonusRows = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.QuizScoreBonus)
+          )
+        )
+        .all();
+      expect(bonusRows).toHaveLength(0);
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(15);
+    });
+
+    it("awards nothing on a failing attempt", () => {
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const attempt = seedQuizAttempt(testDb, base.user.id, quiz.id, 0.5, false);
+
+      const xpEvents = awardQuizPoints(base.user.id, attempt.id);
+      expect(xpEvents).toEqual([]);
+
+      const ledger = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(eq(schema.pointsLedger.userId, base.user.id))
+        .all();
+      expect(ledger).toHaveLength(0);
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(0);
+    });
+
+    it("is a no-op when a prior passing attempt for this quiz already exists", () => {
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const firstAttempt = seedQuizAttempt(
+        testDb,
+        base.user.id,
+        quiz.id,
+        0.75,
+        true,
+        "2024-01-01T10:00:00.000Z"
+      );
+      awardQuizPoints(base.user.id, firstAttempt.id);
+
+      const secondAttempt = seedQuizAttempt(
+        testDb,
+        base.user.id,
+        quiz.id,
+        0.95,
+        true,
+        "2024-01-02T10:00:00.000Z"
+      );
+      const xpEvents = awardQuizPoints(base.user.id, secondAttempt.id);
+      expect(xpEvents).toEqual([]);
+
+      const passRows = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(
+          and(
+            eq(schema.pointsLedger.userId, base.user.id),
+            eq(schema.pointsLedger.event, schema.PointsEventType.QuizPass)
+          )
+        )
+        .all();
+      expect(passRows).toHaveLength(1);
+      expect(passRows[0].referenceId).toBe(String(firstAttempt.id));
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(15);
+    });
+
+    it("is a no-op when called twice for the same attempt", () => {
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const attempt = seedQuizAttempt(testDb, base.user.id, quiz.id, 0.95, true);
+
+      awardQuizPoints(base.user.id, attempt.id);
+      const xpEvents = awardQuizPoints(base.user.id, attempt.id);
+      expect(xpEvents).toEqual([]);
+
+      const ledger = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(eq(schema.pointsLedger.userId, base.user.id))
+        .all();
+      expect(ledger).toHaveLength(2); // quiz_pass + quiz_score_bonus
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(20);
+    });
+
+    it("does not award if the attempt belongs to a different user", () => {
+      const otherUser = testDb
+        .insert(schema.users)
+        .values({
+          name: "Other",
+          email: "other@example.com",
+          role: schema.UserRole.Student,
+        })
+        .returning()
+        .get();
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const attempt = seedQuizAttempt(testDb, otherUser.id, quiz.id, 0.95, true);
+
+      const xpEvents = awardQuizPoints(base.user.id, attempt.id);
+      expect(xpEvents).toEqual([]);
+
+      const ledger = testDb
+        .select()
+        .from(schema.pointsLedger)
+        .where(eq(schema.pointsLedger.userId, base.user.id))
+        .all();
+      expect(ledger).toHaveLength(0);
+    });
+
+    it("updates currentLevel when XP crosses a threshold", () => {
+      testDb
+        .insert(schema.userGamification)
+        .values({ userId: base.user.id, totalPoints: 90, currentLevel: 1 })
+        .run();
+      const { quiz } = seedQuiz(testDb, base.course.id);
+      const attempt = seedQuizAttempt(testDb, base.user.id, quiz.id, 0.95, true);
+
+      awardQuizPoints(base.user.id, attempt.id);
+
+      const stats = getUserGamificationStats(base.user.id);
+      expect(stats.totalPoints).toBe(110); // 90 + 15 + 5
       expect(stats.currentLevel).toBe(2);
     });
   });

@@ -1,6 +1,11 @@
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, inArray } from "drizzle-orm";
 import { db } from "~/db";
-import { userGamification, pointsLedger, PointsEventType } from "~/db/schema";
+import {
+  userGamification,
+  pointsLedger,
+  quizAttempts,
+  PointsEventType,
+} from "~/db/schema";
 
 // ─── Level Thresholds ───
 
@@ -214,6 +219,92 @@ export function awardLessonPoints(userId: number, lessonId: number) {
 
   const streakEvents = updateStreak(userId, todayUTC());
   xpEvents.push(...streakEvents);
+
+  return xpEvents;
+}
+
+function scoreBonus(score: number): { points: number; label: string } | null {
+  if (score >= 0.9) return { points: 5, label: "+5 XP — Grade A bonus!" };
+  if (score >= 0.8) return { points: 3, label: "+3 XP — Grade B bonus!" };
+  return null;
+}
+
+export function awardQuizPoints(userId: number, quizAttemptId: number): XpEvent[] {
+  const attempt = db
+    .select()
+    .from(quizAttempts)
+    .where(eq(quizAttempts.id, quizAttemptId))
+    .get();
+
+  if (!attempt || attempt.userId !== userId || !attempt.passed) return [];
+
+  const priorPassingAttempts = db
+    .select({ id: quizAttempts.id })
+    .from(quizAttempts)
+    .where(
+      and(
+        eq(quizAttempts.userId, userId),
+        eq(quizAttempts.quizId, attempt.quizId),
+        eq(quizAttempts.passed, true)
+      )
+    )
+    .all()
+    .map((r) => String(r.id));
+
+  const alreadyAwarded = db
+    .select()
+    .from(pointsLedger)
+    .where(
+      and(
+        eq(pointsLedger.userId, userId),
+        eq(pointsLedger.event, PointsEventType.QuizPass),
+        inArray(pointsLedger.referenceId, priorPassingAttempts)
+      )
+    )
+    .get();
+  if (alreadyAwarded) return [];
+
+  const row = ensureGamificationRow(userId);
+
+  const xpEvents: XpEvent[] = [
+    { points: 15, event: "quiz_pass", label: "+15 XP — Quiz passed!" },
+  ];
+  let pointsAwarded = 15;
+
+  db.insert(pointsLedger)
+    .values({
+      userId,
+      points: 15,
+      event: PointsEventType.QuizPass,
+      referenceId: String(quizAttemptId),
+    })
+    .run();
+
+  const bonus = scoreBonus(attempt.score);
+  if (bonus) {
+    pointsAwarded += bonus.points;
+    xpEvents.push({
+      points: bonus.points,
+      event: "quiz_score_bonus",
+      label: bonus.label,
+    });
+    db.insert(pointsLedger)
+      .values({
+        userId,
+        points: bonus.points,
+        event: PointsEventType.QuizScoreBonus,
+        referenceId: String(quizAttemptId),
+      })
+      .run();
+  }
+
+  const newTotal = row.totalPoints + pointsAwarded;
+  const newLevel = computeLevel(newTotal).level;
+
+  db.update(userGamification)
+    .set({ totalPoints: newTotal, currentLevel: newLevel })
+    .where(eq(userGamification.userId, userId))
+    .run();
 
   return xpEvents;
 }
